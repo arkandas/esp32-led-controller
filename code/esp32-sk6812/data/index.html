@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 LED Controller</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="status-bubble" id="statusBubble">
+            <span id="statusText">●</span>
+        </div>
+
+        <h1 id="deviceTitle">Loading...</h1>
+
+        <div class="main-content">
+            <div class="left-column">
+                <div class="device-info">
+                    <h3>Device Information</h3>
+                    <ul class="device-details">
+                        <li><span class="label">Network:</span> <span id="networkName">Loading...</span></li>
+                        <li><span class="label">Signal:</span> <span id="signalStrength">Loading...</span></li>
+                        <li><span class="label">MAC:</span> <span id="macAddress">Loading...</span></li>
+                        <li><span class="label">Uptime:</span> <span id="uptime">Loading...</span></li>
+                    </ul>
+                </div>
+
+                <div class="brightness-control">
+                    <h3>Brightness Control</h3>
+                    <input type="range" id="brightnessSlider" min="1" max="10" value="10">
+                    <span id="brightnessValue">100%</span>
+                </div>
+            </div>
+
+            <div class="right-column">
+                <div class="color-control">
+                    <h3>Color Control</h3>
+                    <div class="color-input-group">
+                        <select id="colorMode">
+                            <option value="0">Bright White</option>
+                            <option value="1">Red</option>
+                            <option value="2">Green</option>
+                            <option value="3">Blue</option>
+                            <option value="4">Yellow</option>
+                            <option value="5">Purple</option>
+                            <option value="6">Cyan</option>
+                            <option value="7">Orange</option>
+                            <option value="8">Pure White</option>
+                            <option value="9">Effects</option>
+                            <option value="custom">Custom Color</option>
+                        </select>
+                        <input type="color" id="colorPicker" value="#ffffff">
+                    </div>
+
+                    <div class="rgb-display">
+                        <div class="rgb-values">
+                            <span>R:<span id="rgbR">255</span></span>
+                            <span>G:<span id="rgbG">255</span></span>
+                            <span>B:<span id="rgbB">255</span></span>
+                        </div>
+                        <div class="rgb-hex" id="rgbHex">#FFFFFF</div>
+                    </div>
+
+                    <div class="white-control">
+                        <h3>White Channel</h3>
+                        <input type="range" id="whiteSlider" min="0" max="255" value="255">
+                        <span id="whiteValue">255</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="power-control">
+            <button id="powerButton">Turn ON</button>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

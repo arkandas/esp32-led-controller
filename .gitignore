@@ -1,0 +1,129 @@
+# macOS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# KiCad specific files
+*.bak
+*.bck
+*-bak
+*-cache.lib
+*-cache.dcm
+*.net
+*.log
+fp-info-cache
+*.tmp
+*~
+*.swp
+*.swo
+*.orig
+*-rescue.lib
+*-rescue.dcm
+*-save.pro
+*-save.kicad_pcb
+*-save.kicad_sch
+*-save.kicad_mod
+*.kicad_pcb-bak
+*.kicad_sch-bak
+*.kicad_mod-bak
+
+# KiCad auto backup files
+*-backups/
+_autosave-*
+
+# Arduino specific files
+*.hex
+*.elf
+*.map
+*.bin
+*.lss
+*.sym
+*.o
+*.d
+build/
+libraries/
+hardware/
+
+# Arduino IDE
+.vscode/
+*.code-workspace
+
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+platformio.ini.bak
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# General development files
+*.log
+*.tmp
+*.temp
+*~
+*.swp
+*.swo
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Node modules (if using any web tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python cache (if using any Python scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Documentation build
+docs/_build/ 
