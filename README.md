@@ -2,12 +2,26 @@
 
 A custom ESP32-based controller for WS2812B/SK6812 LED strips with web interface and Alexa integration. Perfect for ambient bedroom lighting! 🛏️
 
-![ESP32 LED Controller Board](assets/final_board.png)
+## Versions
+
+### Version 2
+🚧 **In Development** - Check the `v2-dev` branch
+
+### Version 1
+✅ **Released** - Tagged as `v1.0.0`
+
+![ESP32 LED Controller Board](v1/assets/final_board.png)
+
+---
+
+## Version 1 Documentation
+
+The following documentation applies to **Version 1** of the project. All files are located in the `v1/` directory.
 
 ## ✨ Features
 
 - 🎨 **Web Interface** - Real-time control via browser
-- 🗣️ **Alexa Integration** - Voice control support  
+- 🗣️ **Alexa Integration** - Voice control support
 - 🔘 **Physical Buttons** - Manual brightness/mode control
 - 🌈 **Multiple Effects** - Rainbow, chase, breathing animations
 - 📱 **Custom Colors** - Full RGB color picker
@@ -17,20 +31,25 @@ A custom ESP32-based controller for WS2812B/SK6812 LED strips with web interface
 
 ```
 esp32-led-controller/
-├── code/
-│   ├── esp32-ws2812b/          # WS2812B (RGB) version
-│   │   ├── data/               # Web interface files
-│   │   │   ├── index.html      # Main web UI
-│   │   │   ├── style.css       # Styling
-│   │   │   └── app.js          # JavaScript controls
-│   │   └── esp32-ws2812b.ino   # Arduino sketch
-│   └── esp32-sk6812/           # SK6812 (RGBW) version
-│       ├── data/               # Web interface files  
-│       └── esp32-sk6812.ino    # Arduino sketch
-├── kicad/                      # PCB design files
-├── gerbers/                    # Manufacturing files
-├── datasheets/                 # Component datasheets
-└── assets/                     # Board photos
+├── v1/                         # Version 1 (released)
+│   ├── code/                   # Arduino code & web interface
+│   │   ├── esp32-ws2812b/      # WS2812B (RGB) version
+│   │   │   ├── data/           # Web interface files
+│   │   │   │   ├── index.html  # Main web UI
+│   │   │   │   ├── style.css   # Styling
+│   │   │   │   └── app.js      # JavaScript controls
+│   │   │   └── esp32-ws2812b.ino   # Arduino sketch
+│   │   └── esp32-sk6812/       # SK6812 (RGBW) version
+│   │       ├── data/           # Web interface files
+│   │       └── esp32-sk6812.ino    # Arduino sketch
+│   ├── kicad/                  # KiCad PCB project files
+│   ├── gerbers/                # Manufacturing files
+│   ├── datasheets/             # Component datasheets
+│   ├── ibom/                   # Interactive BOM
+│   └── assets/                 # Board photos
+├── v2/                         # Version 2 (in development)
+├── LICENSE
+└── README.md
 ```
 
 ## 🚀 Quick Start
@@ -60,22 +79,22 @@ esp32-led-controller/
 3. **Install Libraries** via Library Manager
 
 4. **Choose Your LED Type:**
-   - `esp32-ws2812b/` for standard RGB strips
-   - `esp32-sk6812/` for RGBW strips with dedicated white channel
+   - `v1/code/esp32-ws2812b/` for standard RGB strips
+   - `v1/code/esp32-sk6812/` for RGBW strips with dedicated white channel
 
 ### Upload Process
 
 1. **Configure Settings** in the `.ino` file:
    ```cpp
    const char* ssid = "Your_WiFi_Network";
-   const char* password = "Your_WiFi_Password"; 
+   const char* password = "Your_WiFi_Password";
    #define DEVICE_NAME "Bedroom Lights"
    #define NUM_LEDS 60  // Your LED count
    ```
 
 2. **Upload Web Files:**
    - Install [Arduino LittleFS Upload](https://github.com/earlephilhower/arduino-littlefs-upload) plugin
-   - Place the `data` folder in your sketch directory 
+   - Place the `data` folder in your sketch directory
    - Use: Cmd + Shift + P, then select "Upload LittleFS to Pico/ESP8266/ESP32"
 
 3. **Upload Arduino Sketch** normally
@@ -97,7 +116,7 @@ After successful upload:
 1. **WiFi Connection:** Board flashes blue → yellow (5x) when connected
 2. **Web Interface:** Visit `http://[ESP32_IP]:8080`
 
-![Web Interface](assets/web_interface.png)
+![Web Interface](v1/assets/web_interface.png)
 
 3. **Alexa:** Say "Alexa, turn on bedroom lights"
 4. **Buttons:** Physical controls for power/brightness/modes
@@ -129,4 +148,4 @@ The web interface uses vanilla JavaScript with no external dependencies. All fil
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details. 
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
