@@ -95,6 +95,52 @@ v2/
 
 3. **Upload Arduino Sketch** normally
 
+#### Programming via USB
+
+The v2 board uses an **ESP32-S3** with built-in USB - no need for an external USB-to-serial adapter.
+
+**USB Connection:**
+- Connect a USB-C cable directly to the ESP32-S3's USB port
+- The board will show up as a serial device on your computer
+
+**Arduino IDE USB Configuration:**
+
+To get USB UART working on the Serial Monitor:
+
+1. **Board Settings (Tools menu):**
+   - Board: `ESP32S3 Dev Module`
+   - USB CDC On Boot: `Enabled` ⚠️ **Important for Serial Monitor**
+   - USB Mode: `Hardware CDC and JTAG`
+   - Upload Mode: `UART0 / Hardware CDC`
+   - Flash Size: `8MB`
+   - Partition Scheme: `8M with spiffs (3MB APP/1.5MB SPIFFS)`
+   - Upload Speed: `921600` (or lower if uploads fail)
+
+2. **Port Selection:**
+   - After connecting USB, select the port showing as ESP32-S3 in Tools → Port
+   - macOS: Usually appears as `/dev/cu.usbmodem*`
+   - Windows: Usually appears as `COM*`
+   - Linux: Usually appears as `/dev/ttyACM*`
+
+**USB CDC On Boot Explained:**
+- When `Enabled`, the Serial Monitor will work over USB immediately after boot
+- This allows you to see debug output using `Serial.println()` without additional hardware
+- The board will enumerate as a USB serial device (CDC - Communications Device Class)
+
+**First-Time Programming:**
+1. Connect the board via USB-C
+2. The ESP32-S3 should automatically enter bootloader mode when uploading
+3. If upload fails, try:
+   - Press and hold the `BOOT` button (if available on your board)
+   - Click Upload in Arduino IDE
+   - Release `BOOT` button when upload starts
+4. Open Serial Monitor (Ctrl/Cmd + Shift + M) at `115200` baud to see output
+
+**Troubleshooting:**
+- **Port not appearing:** Try a different USB cable (must support data, not just power)
+- **Upload fails:** Lower the upload speed to `460800` or `115200`
+- **Serial Monitor shows gibberish:** Ensure baud rate is set to `115200` and USB CDC On Boot is enabled
+
 ### 🔌 Hardware Connections
 
 | ESP32 Pin | Connection |
