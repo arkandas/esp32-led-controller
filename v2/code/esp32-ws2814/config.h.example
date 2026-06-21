@@ -1,0 +1,15 @@
+#pragma once
+
+// ── WiFi ─────────────────────────────────────────────────────────────────────
+#define WIFI_SSID       "your_wifi_ssid"
+#define WIFI_PASSWORD   "your_wifi_password"
+#define WIFI_HOSTNAME   "ESP32_LED_CONTROLLER"
+
+// ── Alexa ─────────────────────────────────────────────────────────────────────
+#define DEVICE_NAME     "living room lights"
+
+// ── Web server ────────────────────────────────────────────────────────────────
+#define WEB_SERVER_PORT 8081
+
+// ── LED strip ─────────────────────────────────────────────────────────────────
+#define NUM_LEDS        60

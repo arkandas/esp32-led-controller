@@ -8,18 +8,15 @@
 #include <LittleFS.h>
 #include <Wire.h>
 #include <Adafruit_AHTX0.h>
+#include <ArduinoOTA.h>
+#include "config.h"  // Copy config.h.example → config.h and fill in your values
 
-// WiFi credentials
-const char* ssid = "<YOUR_WIFI_SSID>";
-const char* password = "<YOUR_WIFI_PASSWORD>";
-
-// Device settings
-#define DEVICE_NAME "<YOUR_ALEXA_DEVICE_NAME>"
-#define WIFI_HOSTNAME "<YOUR_DEVICE_HOSTNAME>"
-#define WEB_SERVER_PORT <YOUR_WEB_SERVER_PORT>
+// WiFi credentials (defined in config.h)
+const char* ssid     = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
 // LED Strip settings (WS2814 24V RGBW on IO40)
-#define NUM_LEDS <YOUR_LED_COUNT>
+// NUM_LEDS defined in config.h
 #define LED_STRIP_PIN 40
 
 // Status LEDs settings (3x SK6805-EC20 on IO41)
@@ -57,9 +54,11 @@ float currentHumidity = 0.0;
 unsigned long lastTempRead = 0;
 const unsigned long tempReadInterval = 5000; // Read every 5 seconds
 
-// WiFi connection status
-bool wifiConnected = false;
-int wifiErrorCode = 0; // 0 = no error, 1 = connection failed, 2 = SSID not found, 3 = timeout
+// WiFi connection state — written from the WiFi event task, read from loop
+volatile bool wifiConnected   = false;
+volatile bool isReconnecting  = false;
+volatile int  reconnectAttempts = 0;
+const int MAX_RECONNECT_ATTEMPTS = 10;  // Restart device after 10 consecutive failures
 
 // LED strip (RGBW) using Adafruit NeoPixel
 Adafruit_NeoPixel strip(NUM_LEDS, LED_STRIP_PIN, NEO_WRGB + NEO_KHZ800);
@@ -68,11 +67,11 @@ Adafruit_NeoPixel strip(NUM_LEDS, LED_STRIP_PIN, NEO_WRGB + NEO_KHZ800);
 CRGB statusLeds[NUM_STATUS_LEDS];
 
 // State variables
-bool isPoweredOn = true;
-int brightnessLevel = 10;    // Start at full brightness (10 = 100%)
-int currentMode = 0;         // Start with white (index 0 in the colorModes array)
+bool isPoweredOn = false;         // Strip starts OFF — turn on via Alexa or buttons
+int brightnessLevel = 10;         // Full brightness when turned on
+int currentMode = 0;              // Warm white
 unsigned long lastButtonPressTime = 0;
-const unsigned long debounceDelay = 200; // Debounce time in milliseconds
+const unsigned long debounceDelay = 200;
 
 // Custom color variables (RGBW)
 uint8_t customRed = 255;
@@ -84,14 +83,7 @@ bool useCustomColor = false;
 // Power button long press variables
 bool powerButtonPressed = false;
 unsigned long powerButtonPressStartTime = 0;
-const unsigned long powerButtonLongPressDelay = 500; // 0.5 seconds for long press
-
-// Error display variables
-unsigned long lastErrorBlinkTime = 0;
-const int errorBlinkInterval = 500;  // ms
-bool errorLedState = false;
-int errorBlinkCount = 0;
-int errorCycleCount = 0;
+const unsigned long powerButtonLongPressDelay = 500;
 
 // Color definitions for RGBW LEDs (R, G, B, W)
 const int MAX_MODES = 10;
@@ -117,7 +109,6 @@ int effectStep = 0;
 const uint8_t STATUS_LED_BRIGHTNESS = 10;  // ~4% brightness
 
 void setup() {
-  // Initialize Serial for debugging
   Serial.begin(115200);
   Serial.println("ESP32-S3 LED Controller V2 - WS2814 RGBW & SK6805 Status LEDs");
 
@@ -125,12 +116,9 @@ void setup() {
   FastLED.addLeds<STATUS_LED_TYPE, STATUS_LED_PIN, STATUS_COLOR_ORDER>(statusLeds, NUM_STATUS_LEDS);
 
   // Validate configuration
-  if (String(ssid) == "<YOUR_WIFI_SSID>" || String(password) == "<YOUR_WIFI_PASSWORD>" ||
-      String(DEVICE_NAME) == "<YOUR_ALEXA_DEVICE_NAME>" || String(WIFI_HOSTNAME) == "<YOUR_DEVICE_HOSTNAME>") {
-    Serial.println("ERROR: Please configure your settings in the code!");
-    Serial.println("Update ssid, password, DEVICE_NAME, WIFI_HOSTNAME, WEB_SERVER_PORT, and NUM_LEDS.");
-    // Flash red on all status LEDs to indicate configuration error
-    while(true) {
+  if (String(ssid) == "your_wifi_ssid" || String(password) == "your_wifi_password") {
+    Serial.println("ERROR: Please configure config.h before flashing! Copy config.h.example to config.h and fill in your values.");
+    while (true) {
       fill_solid(statusLeds, NUM_STATUS_LEDS, CRGB::Red);
       FastLED.show();
       delay(500);
@@ -154,120 +142,183 @@ void setup() {
   if (aht.begin()) {
     Serial.println("AHT20 temperature sensor initialized");
     ahtAvailable = true;
-    // Read initial temperature
     readTemperature();
   } else {
     Serial.println("WARNING: Could not find AHT20 sensor!");
     ahtAvailable = false;
   }
 
-  // Initialize LED strip (RGBW)
+  // Initialize LED strip — all off
   strip.begin();
-  strip.show(); // Initialize all pixels to 'off'
+  strip.show();
 
-  // Set initial status LED state - Power LED on (green)
+  // Power LED on, others off while connecting
   fill_solid(statusLeds, NUM_STATUS_LEDS, CRGB::Black);
-  statusLeds[LED_POWER] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);  // Power LED green
+  statusLeds[LED_POWER] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);
   FastLED.show();
 
-  // Initialize buttons with pullup resistors
+  // Initialize buttons
   pinMode(BTN_MINUS, INPUT_PULLUP);
-  pinMode(BTN_PLUS, INPUT_PULLUP);
-  pinMode(BTN_MODE, INPUT_PULLUP);
+  pinMode(BTN_PLUS,  INPUT_PULLUP);
+  pinMode(BTN_MODE,  INPUT_PULLUP);
   pinMode(BTN_POWER, INPUT_PULLUP);
 
   // Connect to WiFi
   connectToWiFi();
 
   if (wifiConnected) {
-    // Set up Alexa first
     Serial.println("Setting up Alexa...");
-
-    // Initialize fauxmo - it will handle Alexa discovery automatically
-    fauxmo.createServer(true);  // Create internal TCP server for Alexa communication
-    fauxmo.setPort(80);         // Port 80 required for gen3 Alexa devices
-    fauxmo.enable(true);        // Enable after WiFi is connected
+    fauxmo.createServer(true);
+    fauxmo.setPort(80);
+    fauxmo.enable(true);
     fauxmo.addDevice(DEVICE_NAME);
-    Serial.printf("Fauxmo device '%s' added and enabled\r\n", DEVICE_NAME);
+    Serial.printf("Fauxmo device '%s' added\r\n", DEVICE_NAME);
 
-    // Set the callback
     fauxmo.onSetState([](unsigned char device_id, const char * device_name, bool state, unsigned char value) {
-        Serial.printf("[ALEXA] Device #%d (%s) state: %s\r\n", device_id, device_name, state ? "ON" : "OFF");
-
-        if (strcmp(device_name, DEVICE_NAME) == 0) {
-            if (state) {
-                // Turn on lights with white color at max brightness
-                isPoweredOn = true;
-                currentMode = 0;  // Pure White mode
-                brightnessLevel = 10;  // Max brightness
-                updateLEDStrip();
-            } else {
-                // Turn off lights
-                isPoweredOn = false;
-                setStripColor(0, 0, 0, 0);
-                strip.show();
-            }
-            updateStatusLEDs();
+      Serial.printf("[ALEXA] Device #%d (%s) state: %s\r\n", device_id, device_name, state ? "ON" : "OFF");
+      if (strcmp(device_name, DEVICE_NAME) == 0) {
+        if (state) {
+          isPoweredOn = true;
+          currentMode = 0;
+          brightnessLevel = 10;
+          updateLEDStrip();
+        } else {
+          isPoweredOn = false;
+          setStripColor(0, 0, 0, 0);
+          strip.show();
         }
+        updateStatusLEDs();
+      }
     });
 
     Serial.println("Alexa integration setup complete");
-
-    // Then set up web server
     setupWebServer();
+    setupOTA();
   }
 
-  // Show initial state
+  // Show initial state — strip stays OFF (isPoweredOn = false)
   updateStatusLEDs();
   updateLEDStrip();
 }
 
 void loop() {
-  // Handle WiFi error codes with LED flashes if not connected
-  if (!wifiConnected && wifiErrorCode > 0) {
-    displayErrorCode();
-  } else {
-    // Process normal operation
-    // Check all button states
-    checkButtons();
+  unsigned long now = millis();
 
-    if (wifiConnected) {
-      // Handle Alexa requests
-      fauxmo.handle();
+  checkButtons();
 
-      // Debug message every 30 seconds
-      static unsigned long lastMsg = 0;
-      if (millis() - lastMsg > 30000) {
-        lastMsg = millis();
-        Serial.printf("Alexa device '%s' is ready. IP: %s\r\n", DEVICE_NAME, WiFi.localIP().toString().c_str());
-        Serial.printf("Web interface available at: http://%s:%d\r\n", WiFi.localIP().toString().c_str(), WEB_SERVER_PORT);
-      }
-    }
+  if (wifiConnected) {
+    ArduinoOTA.handle();
+    fauxmo.handle();
 
-    // Update status LEDs based on power state
-    updateStatusLEDs();
-
-    // Update LED strip effects if needed
-    unsigned long currentMillis = millis();
-    if (isPoweredOn && currentMillis - lastEffectTime > effectSpeed) {
-      updateLEDStripEffects();
-      lastEffectTime = currentMillis;
-    }
-
-    // Read temperature periodically
-    if (ahtAvailable && currentMillis - lastTempRead > tempReadInterval) {
-      readTemperature();
-      lastTempRead = currentMillis;
+    // Debug log every 30s
+    static unsigned long lastMsg = 0;
+    if (now - lastMsg > 30000) {
+      lastMsg = now;
+      Serial.printf("[Status] IP: %s  Heap: %u bytes  Uptime: %lus\r\n",
+        WiFi.localIP().toString().c_str(), ESP.getFreeHeap(), now / 1000);
     }
   }
 
-  // Small delay to reduce CPU usage
+  updateStatusLEDs();
+
+  if (isPoweredOn && now - lastEffectTime > effectSpeed) {
+    updateLEDStripEffects();
+    lastEffectTime = now;
+  }
+
+  if (ahtAvailable && now - lastTempRead > tempReadInterval) {
+    readTemperature();
+    lastTempRead = now;
+  }
+
   delay(10);
 }
 
+// ── WiFi management ──────────────────────────────────────────────────────────
+
+// Called automatically by the WiFi driver task — no polling needed
+void onWifiEvent(WiFiEvent_t event) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      wifiConnected    = true;
+      isReconnecting   = false;
+      reconnectAttempts = 0;
+      Serial.printf("[WiFi] Connected! IP: %s\r\n", WiFi.localIP().toString().c_str());
+      break;
+
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      wifiConnected  = false;
+      isReconnecting = true;
+      reconnectAttempts++;
+      Serial.printf("[WiFi] Disconnected (attempt %d/%d)\r\n",
+                    reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        Serial.println("[WiFi] Max reconnect attempts reached — restarting device");
+        ESP.restart();
+      }
+      // setAutoReconnect(true) makes the driver retry automatically
+      break;
+
+    default:
+      break;
+  }
+}
+
+void connectToWiFi() {
+  Serial.printf("Connecting to WiFi: %s\r\n", ssid);
+
+  WiFi.onEvent(onWifiEvent);     // Register event handler before begin()
+  WiFi.setHostname(WIFI_HOSTNAME);
+  WiFi.setSleep(false);          // Disable power saving — prevents DHCP drops
+  WiFi.setAutoReconnect(true);   // Driver retries automatically on disconnect
+  WiFi.persistent(false);        // Don't write credentials to flash every boot
+
+  // Show blue on WiFi LED and strip during connection
+  statusLeds[LED_POWER] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);
+  statusLeds[LED_WIFI]  = CRGB(0, 0, STATUS_LED_BRIGHTNESS);
+  statusLeds[LED_STRIP] = CRGB::Black;
+  FastLED.show();
+
+  setStripColor(0, 0, 255, 0);
+  strip.setBrightness(255);
+  strip.show();
+
+  WiFi.begin(ssid, password);
+
+  // Block here just for the initial boot connection (max 10s)
+  int attempts = 0;
+  while (!wifiConnected && attempts < 20) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  Serial.println();
+
+  if (wifiConnected) {
+    // Flash yellow 5× on success
+    for (int i = 0; i < 5; i++) {
+      fill_solid(statusLeds, NUM_STATUS_LEDS, CRGB(STATUS_LED_BRIGHTNESS, STATUS_LED_BRIGHTNESS, 0));
+      FastLED.show();
+      setStripColor(255, 255, 0, 0);
+      strip.show();
+      delay(200);
+
+      fill_solid(statusLeds, NUM_STATUS_LEDS, CRGB::Black);
+      FastLED.show();
+      setStripColor(0, 0, 0, 0);
+      strip.show();
+      delay(200);
+    }
+  } else {
+    Serial.println("Initial WiFi connection failed — will keep retrying in background");
+    isReconnecting = true;
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
 void readTemperature() {
   if (!ahtAvailable) return;
-
   sensors_event_t humidity, temp;
   if (aht.getEvent(&humidity, &temp)) {
     currentTemperature = temp.temperature;
@@ -276,108 +327,43 @@ void readTemperature() {
   }
 }
 
-// Helper function to set all strip LEDs to one RGBW color
 void setStripColor(uint8_t r, uint8_t g, uint8_t b, uint8_t w) {
   for (int i = 0; i < NUM_LEDS; i++) {
     strip.setPixelColor(i, strip.Color(r, g, b, w));
   }
 }
 
-void connectToWiFi() {
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(ssid);
+// ── OTA ──────────────────────────────────────────────────────────────────────
 
-  // Set custom hostname (this is what appears on your router)
-  WiFi.setHostname(WIFI_HOSTNAME);
-  Serial.printf("WiFi hostname set to: %s\r\n", WIFI_HOSTNAME);
+void setupOTA() {
+  ArduinoOTA.setHostname(WIFI_HOSTNAME);
+  ArduinoOTA.setPassword(OTA_PASSWORD);
 
-  // Set status LEDs during connection attempt
-  // Power LED stays green, WiFi LED blue (connecting), Strip LED off
-  statusLeds[LED_POWER] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);  // Power: Green
-  statusLeds[LED_WIFI] = CRGB(0, 0, STATUS_LED_BRIGHTNESS);   // WiFi: Blue (connecting)
-  statusLeds[LED_STRIP] = CRGB::Black;                        // Strip: Off
-  FastLED.show();
+  ArduinoOTA.onStart([]() {
+    Serial.println("[OTA] Starting update...");
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("[OTA] Done. Rebooting...");
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("[OTA] Error %u\r\n", error);
+  });
 
-  // Set LED strip to blue during connection attempt
-  setStripColor(0, 0, 255, 0);
-  strip.setBrightness(255);
-  strip.show();
-
-  // Connect to WiFi
-  WiFi.begin(ssid, password);
-
-  // Wait for connection with timeout
-  int connectionAttempts = 0;
-  while (WiFi.status() != WL_CONNECTED && connectionAttempts < 20) { // 10 second timeout
-    delay(500);
-    Serial.print(".");
-    connectionAttempts++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("");
-    Serial.println("WiFi connected successfully");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
-    wifiConnected = true;
-    wifiErrorCode = 0;
-
-    // Flash yellow on all status LEDs and strip five times to indicate success
-    for (int i = 0; i < 5; i++) {
-      // Yellow on all status LEDs
-      fill_solid(statusLeds, NUM_STATUS_LEDS, CRGB(STATUS_LED_BRIGHTNESS, STATUS_LED_BRIGHTNESS, 0));
-      FastLED.show();
-
-      // Flash LED strip yellow (R+G, no W)
-      setStripColor(255, 255, 0, 0);
-      strip.show();
-      delay(200);
-
-      // All off
-      fill_solid(statusLeds, NUM_STATUS_LEDS, CRGB::Black);
-      FastLED.show();
-
-      setStripColor(0, 0, 0, 0);
-      strip.show();
-      delay(200);
-    }
-  } else {
-    Serial.println("");
-    Serial.println("Failed to connect to WiFi");
-    wifiConnected = false;
-
-    // Set LED strip to red to indicate failure
-    setStripColor(255, 0, 0, 0);
-    strip.show();
-
-    // Set WiFi status LED to red
-    statusLeds[LED_WIFI] = CRGB(STATUS_LED_BRIGHTNESS, 0, 0);  // WiFi: Red (error)
-    FastLED.show();
-
-    if (WiFi.status() == WL_NO_SSID_AVAIL) {
-      Serial.println("SSID not found");
-      wifiErrorCode = 2;
-    } else if (WiFi.status() == WL_CONNECT_FAILED) {
-      Serial.println("Connection failed - check password");
-      wifiErrorCode = 1;
-    } else {
-      Serial.println("Connection timeout");
-      wifiErrorCode = 3;
-    }
-  }
+  ArduinoOTA.begin();
+  Serial.println("[OTA] Ready");
 }
 
-void setupWebServer() {
-  // Set up web server routes
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/control", HTTP_GET, handleControl);
-  server.on("/toggle", HTTP_GET, handleToggle);
-  server.on("/brightness", HTTP_GET, handleBrightness);
-  server.on("/mode", HTTP_GET, handleMode);
-  server.on("/status", HTTP_GET, handleStatus);
-  server.on("/color", HTTP_GET, handleCustomColor);
+// ── Web server ───────────────────────────────────────────────────────────────
 
-  // Serve static files from LittleFS
+void setupWebServer() {
+  server.on("/",          HTTP_GET, handleRoot);
+  server.on("/control",   HTTP_GET, handleControl);
+  server.on("/toggle",    HTTP_GET, handleToggle);
+  server.on("/brightness",HTTP_GET, handleBrightness);
+  server.on("/mode",      HTTP_GET, handleMode);
+  server.on("/status",    HTTP_GET, handleStatus);
+  server.on("/color",     HTTP_GET, handleCustomColor);
+
   server.on("/style.css", HTTP_GET, [](AsyncWebServerRequest *request) {
     if (LittleFS.exists("/style.css")) {
       request->send(LittleFS, "/style.css", "text/css");
@@ -394,38 +380,30 @@ void setupWebServer() {
     }
   });
 
-  // Start server
   server.begin();
   Serial.printf("HTTP server started on port %d\r\n", WEB_SERVER_PORT);
-  Serial.printf("Web interface: http://%s:%d\r\n", WiFi.localIP().toString().c_str(), WEB_SERVER_PORT);
 }
 
 void handleRoot(AsyncWebServerRequest *request) {
-  // Serve the HTML file from LittleFS
   if (LittleFS.exists("/index.html")) {
     request->send(LittleFS, "/index.html", "text/html");
   } else {
-    Serial.println("ERROR: index.html not found in LittleFS");
     request->send(404, "text/plain", "File not found. Please upload the data folder to LittleFS.");
   }
 }
 
 void handleControl(AsyncWebServerRequest *request) {
-  // Simple control interface
-  String html = "<html><body>";
-  html += "<h1>WS2814 RGBW LED Control</h1>";
+  String html = "<html><body><h1>WS2814 RGBW LED Control</h1>";
   html += "<p>Power: <a href='/toggle'>Toggle</a></p>";
   html += "<p>Brightness: ";
   for (int i = 1; i <= 10; i++) {
     html += "<a href='/brightness?level=" + String(i) + "'>" + String(i*10) + "%</a> ";
   }
-  html += "</p>";
-  html += "<p>Mode: ";
+  html += "</p><p>Mode: ";
   for (int i = 0; i < MAX_MODES; i++) {
     html += "<a href='/mode?mode=" + String(i) + "'>" + String(i) + "</a> ";
   }
-  html += "</p>";
-  html += "</body></html>";
+  html += "</p></body></html>";
   request->send(200, "text/html", html);
 }
 
@@ -452,7 +430,7 @@ void handleMode(AsyncWebServerRequest *request) {
     int mode = request->arg("mode").toInt();
     if (mode >= 0 && mode < MAX_MODES) {
       currentMode = mode;
-      useCustomColor = false;  // Disable custom color when selecting preset mode
+      useCustomColor = false;
       updateLEDStrip();
     }
   }
@@ -461,21 +439,21 @@ void handleMode(AsyncWebServerRequest *request) {
 
 void handleStatus(AsyncWebServerRequest *request) {
   String status = "{";
-  status += "\"isPoweredOn\":" + String(isPoweredOn ? "true" : "false") + ",";
+  status += "\"isPoweredOn\":"     + String(isPoweredOn ? "true" : "false") + ",";
   status += "\"brightnessLevel\":" + String(brightnessLevel) + ",";
-  status += "\"currentMode\":" + String(currentMode) + ",";
-  status += "\"deviceName\":\"" + String(DEVICE_NAME) + "\",";
-  status += "\"macAddress\":\"" + WiFi.macAddress() + "\",";
-  status += "\"wifiSSID\":\"" + String(ssid) + "\",";
-  status += "\"signalStrength\":" + String(WiFi.RSSI()) + ",";
-  status += "\"uptime\":" + String(millis() / 1000) + ",";
-  status += "\"useCustomColor\":" + String(useCustomColor ? "true" : "false") + ",";
-  status += "\"customRed\":" + String(customRed) + ",";
-  status += "\"customGreen\":" + String(customGreen) + ",";
-  status += "\"customBlue\":" + String(customBlue) + ",";
-  status += "\"customWhite\":" + String(customWhite) + ",";
-  status += "\"temperature\":" + String(currentTemperature, 1) + ",";
-  status += "\"humidity\":" + String(currentHumidity, 1) + ",";
+  status += "\"currentMode\":"     + String(currentMode) + ",";
+  status += "\"deviceName\":\""    + String(DEVICE_NAME) + "\",";
+  status += "\"macAddress\":\""    + WiFi.macAddress() + "\",";
+  status += "\"wifiSSID\":\""      + String(ssid) + "\",";
+  status += "\"signalStrength\":"  + String(WiFi.RSSI()) + ",";
+  status += "\"uptime\":"          + String(millis() / 1000) + ",";
+  status += "\"useCustomColor\":"  + String(useCustomColor ? "true" : "false") + ",";
+  status += "\"customRed\":"       + String(customRed) + ",";
+  status += "\"customGreen\":"     + String(customGreen) + ",";
+  status += "\"customBlue\":"      + String(customBlue) + ",";
+  status += "\"customWhite\":"     + String(customWhite) + ",";
+  status += "\"temperature\":"     + String(currentTemperature, 1) + ",";
+  status += "\"humidity\":"        + String(currentHumidity, 1) + ",";
   status += "\"sensorAvailable\":" + String(ahtAvailable ? "true" : "false");
   status += "}";
   request->send(200, "application/json", status);
@@ -487,12 +465,10 @@ void handleCustomColor(AsyncWebServerRequest *request) {
     int g = request->arg("g").toInt();
     int b = request->arg("b").toInt();
     int w = request->hasArg("w") ? request->arg("w").toInt() : 0;
-
-    // Validate RGBW values
     if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255 && w >= 0 && w <= 255) {
-      customRed = r;
+      customRed   = r;
       customGreen = g;
-      customBlue = b;
+      customBlue  = b;
       customWhite = w;
       useCustomColor = true;
       updateLEDStrip();
@@ -501,234 +477,136 @@ void handleCustomColor(AsyncWebServerRequest *request) {
   request->send(200, "text/plain", "OK");
 }
 
-void checkButtons() {
-  // Only process regular button presses after debounce delay
-  unsigned long currentMillis = millis();
+// ── Buttons ──────────────────────────────────────────────────────────────────
 
-  // Handle power button with long press
+void checkButtons() {
+  unsigned long now = millis();
+
+  // Power button — long press to toggle
   if (digitalRead(BTN_POWER) == LOW) {
-    // If button was not previously pressed, record the time
     if (!powerButtonPressed) {
       powerButtonPressed = true;
-      powerButtonPressStartTime = currentMillis;
-    }
-    // Check if the button has been pressed long enough
-    else if (currentMillis - powerButtonPressStartTime >= powerButtonLongPressDelay) {
-      // Long press detected - toggle power
+      powerButtonPressStartTime = now;
+    } else if (now - powerButtonPressStartTime >= powerButtonLongPressDelay) {
       isPoweredOn = !isPoweredOn;
-      Serial.print("Power: ");
-      Serial.println(isPoweredOn ? "ON" : "OFF");
-
-      // Reset state to prevent multiple toggles
+      Serial.printf("Power: %s\r\n", isPoweredOn ? "ON" : "OFF");
       powerButtonPressed = false;
-      lastButtonPressTime = currentMillis;
+      lastButtonPressTime = now;
       updateStatusLEDs();
       updateLEDStrip();
     }
   } else {
-    // Button released
     powerButtonPressed = false;
   }
 
-  // Only process other buttons after debounce delay
-  if (currentMillis - lastButtonPressTime < debounceDelay) {
-    return;
-  }
+  if (now - lastButtonPressTime < debounceDelay) return;
 
-  // Check minus button (decrease brightness)
   if (digitalRead(BTN_MINUS) == LOW) {
     brightnessLevel = max(1, brightnessLevel - 1);
-    Serial.print("Brightness: ");
-    Serial.println(brightnessLevel * 10);
-    lastButtonPressTime = currentMillis;
+    Serial.printf("Brightness: %d%%\r\n", brightnessLevel * 10);
+    lastButtonPressTime = now;
     updateLEDStrip();
   }
 
-  // Check plus button (increase brightness)
   if (digitalRead(BTN_PLUS) == LOW) {
     brightnessLevel = min(10, brightnessLevel + 1);
-    Serial.print("Brightness: ");
-    Serial.println(brightnessLevel * 10);
-    lastButtonPressTime = currentMillis;
+    Serial.printf("Brightness: %d%%\r\n", brightnessLevel * 10);
+    lastButtonPressTime = now;
     updateLEDStrip();
   }
 
-  // Check mode button (change color)
   if (digitalRead(BTN_MODE) == LOW) {
     currentMode = (currentMode + 1) % MAX_MODES;
-    useCustomColor = false;  // Disable custom color when changing modes via button
-    Serial.print("Mode: ");
-    Serial.println(currentMode);
-    lastButtonPressTime = currentMillis;
+    useCustomColor = false;
+    Serial.printf("Mode: %d\r\n", currentMode);
+    lastButtonPressTime = now;
     updateLEDStrip();
   }
 }
 
-void displayErrorCode() {
-  unsigned long currentMillis = millis();
-
-  // Check if it's time to toggle the LED
-  if (currentMillis - lastErrorBlinkTime >= errorBlinkInterval) {
-    lastErrorBlinkTime = currentMillis;
-
-    // Toggle LED state
-    errorLedState = !errorLedState;
-    errorBlinkCount++;
-
-    // Yellow flash for WiFi LED during error
-    if (errorLedState) {
-      // Power LED stays green
-      statusLeds[LED_POWER] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);
-      // WiFi LED yellow (error indication)
-      statusLeds[LED_WIFI] = CRGB(STATUS_LED_BRIGHTNESS, STATUS_LED_BRIGHTNESS, 0);
-      // Strip status LED off
-      statusLeds[LED_STRIP] = CRGB::Black;
-    } else {
-      // Power LED stays green
-      statusLeds[LED_POWER] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);
-      // WiFi LED off
-      statusLeds[LED_WIFI] = CRGB::Black;
-      // Strip status LED off
-      statusLeds[LED_STRIP] = CRGB::Black;
-    }
-    FastLED.show();
-
-    // After 60 blinks (about 30 seconds), try to reconnect
-    if (errorBlinkCount >= 60) {
-      errorBlinkCount = 0;
-      connectToWiFi();
-    }
-  }
-}
+// ── LED updates ──────────────────────────────────────────────────────────────
 
 void updateStatusLEDs() {
-  // LED1 (Power): Always green when powered
+  // LED1 — Power: always green
   statusLeds[LED_POWER] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);
 
-  // LED2 (WiFi): Green if connected, Red if not
-  if (wifiConnected) {
-    statusLeds[LED_WIFI] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);  // Green
+  // LED2 — WiFi: green=connected, yellow blink=reconnecting, red=failed
+  bool actuallyConnected = (WiFi.status() == WL_CONNECTED);
+  if (actuallyConnected) {
+    statusLeds[LED_WIFI] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);
+  } else if (isReconnecting) {
+    bool blink = (millis() % 1000) < 500;
+    statusLeds[LED_WIFI] = blink
+      ? CRGB(STATUS_LED_BRIGHTNESS, STATUS_LED_BRIGHTNESS, 0)  // yellow
+      : CRGB::Black;
   } else {
-    statusLeds[LED_WIFI] = CRGB(STATUS_LED_BRIGHTNESS, 0, 0);  // Red
+    statusLeds[LED_WIFI] = CRGB(STATUS_LED_BRIGHTNESS, 0, 0);  // red
   }
 
-  // LED3 (Strip): Green if strip is on, Red if off
-  if (isPoweredOn) {
-    statusLeds[LED_STRIP] = CRGB(0, STATUS_LED_BRIGHTNESS, 0);  // Green
-  } else {
-    statusLeds[LED_STRIP] = CRGB(STATUS_LED_BRIGHTNESS, 0, 0);  // Red
-  }
+  // LED3 — Strip: green=on, red=off
+  statusLeds[LED_STRIP] = isPoweredOn
+    ? CRGB(0, STATUS_LED_BRIGHTNESS, 0)
+    : CRGB(STATUS_LED_BRIGHTNESS, 0, 0);
 
   FastLED.show();
 }
 
 void updateLEDStrip() {
-  // Calculate brightness (map 1-10 to 25-255)
   uint8_t brightness = map(brightnessLevel, 1, 10, 25, 255);
   strip.setBrightness(brightness);
 
   if (!isPoweredOn) {
-    // Turn off all LEDs on strip
     setStripColor(0, 0, 0, 0);
     strip.show();
     return;
   }
 
-  // Apply color based on mode or custom color
   if (useCustomColor) {
-    // Use custom RGBW color
     setStripColor(customRed, customGreen, customBlue, customWhite);
+    Serial.printf("Strip: Custom R=%d G=%d B=%d W=%d Bri=%d%%\r\n",
+      customRed, customGreen, customBlue, customWhite, brightnessLevel * 10);
   } else if (currentMode < MAX_MODES - 1) {
-    // Use predefined color mode (not effects mode)
     setStripColor(colorModes[currentMode][0], colorModes[currentMode][1],
                   colorModes[currentMode][2], colorModes[currentMode][3]);
+    Serial.printf("Strip: Mode=%d Bri=%d%%\r\n", currentMode, brightnessLevel * 10);
   }
 
-  // Show the changes
   strip.show();
-
-  // Debug output
-  if (useCustomColor) {
-    Serial.print("LED Strip Update - Custom Color: R=");
-    Serial.print(customRed);
-    Serial.print(", G=");
-    Serial.print(customGreen);
-    Serial.print(", B=");
-    Serial.print(customBlue);
-    Serial.print(", W=");
-    Serial.print(customWhite);
-  } else {
-    Serial.print("LED Strip Update - Mode: ");
-    Serial.print(currentMode);
-  }
-  Serial.print(", Brightness: ");
-  Serial.println(brightnessLevel * 10);
 }
 
 void updateLEDStripEffects() {
-  // Only process effects if power is on
-  if (!isPoweredOn) return;
+  if (!isPoweredOn || useCustomColor) return;
+  if (currentMode < MAX_MODES - 1) return;  // Only mode 9
 
-  // Don't override custom colors with effects
-  if (useCustomColor) return;
-
-  // Special effects only for mode 9 (effects mode)
-  if (currentMode < MAX_MODES - 1) {
-    // For modes 0-8: just show solid colors, already handled in updateLEDStrip()
-    return;
-  }
-
-  // Mode 9: Cycle through effects
   static uint8_t effectSubMode = 0;
   static unsigned long lastEffectChange = 0;
   static uint8_t hue = 0;
   static uint8_t breathHue = 0;
 
-  // Change effect every 10 seconds
   if (millis() - lastEffectChange > 10000) {
-    effectSubMode = (effectSubMode + 1) % 3; // 3 different effects
+    effectSubMode = (effectSubMode + 1) % 3;
     lastEffectChange = millis();
-    Serial.print("Effect changed to: ");
-    Serial.println(effectSubMode);
+    Serial.printf("Effect changed to: %d\r\n", effectSubMode);
   }
 
-  // Apply the current effect
   switch (effectSubMode) {
-    case 0:
-      // Rainbow effect
-      rainbowEffect();
-      break;
-
-    case 1:
-      // Chase effect with changing colors
-      hue += 3;
-      chaseEffect(hue);
-      break;
-
-    case 2:
-      // Breathing effect with changing colors
-      breathHue++;
-      breatheEffect(breathHue);
-      break;
+    case 0: rainbowEffect();       break;
+    case 1: hue += 3; chaseEffect(hue);    break;
+    case 2: breathHue++; breatheEffect(breathHue); break;
   }
 
   strip.show();
 }
 
-// Convert HSV to RGB for effects
+// ── Effects ──────────────────────────────────────────────────────────────────
+
 void hsvToRgb(uint8_t h, uint8_t s, uint8_t v, uint8_t* r, uint8_t* g, uint8_t* b) {
-  if (s == 0) {
-    *r = *g = *b = v;
-    return;
-  }
-
-  uint8_t region = h / 43;
+  if (s == 0) { *r = *g = *b = v; return; }
+  uint8_t region    = h / 43;
   uint8_t remainder = (h - (region * 43)) * 6;
-
   uint8_t p = (v * (255 - s)) >> 8;
   uint8_t q = (v * (255 - ((s * remainder) >> 8))) >> 8;
   uint8_t t = (v * (255 - ((s * (255 - remainder)) >> 8))) >> 8;
-
   switch (region) {
     case 0:  *r = v; *g = t; *b = p; break;
     case 1:  *r = q; *g = v; *b = p; break;
@@ -740,48 +618,29 @@ void hsvToRgb(uint8_t h, uint8_t s, uint8_t v, uint8_t* r, uint8_t* g, uint8_t* 
 }
 
 void breatheEffect(uint8_t hue) {
-  // Simple sine wave breathing effect
-  float pulse = (exp(sin(millis()/2000.0*PI)) - 0.36787944) * 108.0;
-  uint8_t brightness = pulse;
-
+  float pulse = (exp(sin(millis() / 2000.0 * PI)) - 0.36787944) * 108.0;
+  uint8_t brightness = (uint8_t)pulse;
   uint8_t r, g, b;
   hsvToRgb(hue, 255, 255, &r, &g, &b);
-
-  // Apply breathing brightness
-  r = (r * brightness) / 255;
-  g = (g * brightness) / 255;
-  b = (b * brightness) / 255;
-
-  setStripColor(r, g, b, 0);
+  setStripColor((r * brightness) / 255, (g * brightness) / 255, (b * brightness) / 255, 0);
 }
 
 void chaseEffect(uint8_t hue) {
-  // Moving dot chase effect
   setStripColor(0, 0, 0, 0);
-
   effectStep = (effectStep + 1) % NUM_LEDS;
-
   uint8_t r, g, b;
   hsvToRgb(hue, 255, 255, &r, &g, &b);
-
   strip.setPixelColor(effectStep, strip.Color(r, g, b, 0));
-
-  // Add a tail
-  uint8_t tailLength = min(3, NUM_LEDS/4);
+  uint8_t tailLength = min(3, NUM_LEDS / 4);
   for (int i = 1; i <= tailLength; i++) {
-    int pos = (effectStep - i + NUM_LEDS) % NUM_LEDS;
+    int pos  = (effectStep - i + NUM_LEDS) % NUM_LEDS;
     uint8_t fade = 255 - (i * 255 / (tailLength + 1));
-    uint8_t fr = (r * fade) / 255;
-    uint8_t fg = (g * fade) / 255;
-    uint8_t fb = (b * fade) / 255;
-    strip.setPixelColor(pos, strip.Color(fr, fg, fb, 0));
+    strip.setPixelColor(pos, strip.Color((r * fade) / 255, (g * fade) / 255, (b * fade) / 255, 0));
   }
 }
 
 void rainbowEffect() {
-  // Moving rainbow effect
   effectStep = (effectStep + 1) % 256;
-
   for (int i = 0; i < NUM_LEDS; i++) {
     uint8_t pixelHue = (effectStep + (i * 256 / NUM_LEDS)) & 255;
     uint8_t r, g, b;

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 LED Controller V3</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="status-bubble" id="statusBubble">
+            <span id="statusText">●</span>
+        </div>
+
+        <h1 id="deviceTitle">Loading...</h1>
+
+        <!-- Strip selector: all controls below act on the selected target -->
+        <div class="strip-selector" id="stripSelector">
+            <button class="strip-tab active" data-strip="0">Strip 1</button>
+            <button class="strip-tab" data-strip="1">Strip 2</button>
+            <button class="strip-tab" data-strip="all">Both</button>
+        </div>
+
+        <div class="main-content">
+            <!-- Left column: the per-strip controls -->
+            <div class="left-column">
+                <div class="color-control">
+                    <h3>Color Control <span class="target-badge" id="targetBadge">Strip 1</span></h3>
+                    <div class="color-input-group">
+                        <select id="colorMode">
+                            <option value="0">Warm White</option>
+                            <option value="1">Red</option>
+                            <option value="2">Green</option>
+                            <option value="3">Blue</option>
+                            <option value="4">Yellow</option>
+                            <option value="5">Purple</option>
+                            <option value="6">Cyan</option>
+                            <option value="7">Orange</option>
+                            <option value="8">Bright White</option>
+                            <option value="9">Effects</option>
+                            <option value="custom">Custom Color</option>
+                        </select>
+                    </div>
+                    <input type="color" id="colorPicker" value="#ffffff">
+                    <div class="rgb-display">
+                        <div class="rgb-values">
+                            <span>R:<span id="rgbR">255</span></span>
+                            <span>G:<span id="rgbG">255</span></span>
+                            <span>B:<span id="rgbB">255</span></span>
+                        </div>
+                        <div class="rgb-hex" id="rgbHex">#FFFFFF</div>
+                    </div>
+                    <div class="white-control">
+                        <label class="white-label">White <span id="whiteValue">0</span></label>
+                        <input type="range" id="whiteSlider" min="0" max="255" value="0">
+                    </div>
+                </div>
+
+                <div class="brightness-control">
+                    <h3>Brightness</h3>
+                    <input type="range" id="brightnessSlider" min="1" max="10" value="10">
+                    <span id="brightnessValue">100%</span>
+                </div>
+
+                <div class="power-control">
+                    <button id="powerButton">Turn ON</button>
+                </div>
+            </div>
+
+            <!-- Right column: monitoring + device -->
+            <div class="right-column">
+                <div class="sensor-info power-panel">
+                    <h3>Power</h3>
+                    <div class="sensor-grid power-grid">
+                        <div class="sensor-card">
+                            <span class="sensor-icon">⚡</span>
+                            <span class="sensor-value" id="powerVoltage">--</span>
+                            <span class="sensor-unit">V</span>
+                        </div>
+                        <div class="sensor-card">
+                            <span class="sensor-icon">🔌</span>
+                            <span class="sensor-value" id="powerCurrent">--</span>
+                            <span class="sensor-unit" id="powerCurrentUnit">A</span>
+                        </div>
+                        <div class="sensor-card">
+                            <span class="sensor-icon">💡</span>
+                            <span class="sensor-value" id="powerWatts">--</span>
+                            <span class="sensor-unit" id="powerWattsUnit">W</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="device-info">
+                    <h3>Device Information</h3>
+                    <ul class="device-details">
+                        <li><span class="label">Network:</span> <span id="networkName">Loading...</span></li>
+                        <li><span class="label">Signal:</span> <span id="signalStrength">Loading...</span></li>
+                        <li><span class="label">MAC:</span> <span id="macAddress">Loading...</span></li>
+                        <li><span class="label">Uptime:</span> <span id="uptime">Loading...</span></li>
+                    </ul>
+                </div>
+
+                <div class="sensor-info">
+                    <h3>Environment</h3>
+                    <div class="sensor-grid">
+                        <div class="sensor-card">
+                            <span class="sensor-icon">🌡</span>
+                            <span class="sensor-value" id="temperature">--</span>
+                            <span class="sensor-unit">°C</span>
+                        </div>
+                        <div class="sensor-card">
+                            <span class="sensor-icon">💧</span>
+                            <span class="sensor-value" id="humidity">--</span>
+                            <span class="sensor-unit">%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="sensor-info">
+                    <h3>Display</h3>
+                    <div class="display-control">
+                        <span class="display-label">Screen Backlight</span>
+                        <label class="toggle">
+                            <input type="checkbox" id="backlightToggle" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

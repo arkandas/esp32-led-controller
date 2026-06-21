@@ -21,7 +21,7 @@
       "footprints": true,
       "graphics": true,
       "keepouts": true,
-      "lockedItems": false,
+      "lockedItems": true,
       "otherItems": true,
       "pads": true,
       "text": true,
@@ -51,7 +51,7 @@
       "conflict_shadows",
       "shapes"
     ],
-    "visible_layers": "ffffffff_ffffffff_ffffffff_ffffffff",
+    "visible_layers": "ffffffff_ffffffff_ffffffff_ffffffbf",
     "zone_display_mode": 0
   },
   "git": {
@@ -61,7 +61,7 @@
     "ssh_key": ""
   },
   "meta": {
-    "filename": "esp32-led-controller-v2.kicad_prl",
+    "filename": "esp32-led-controller-v3.kicad_prl",
     "version": 5
   },
   "net_inspector_panel": {
@@ -99,7 +99,7 @@
       103,
       74,
       103,
-      0
+      43
     ],
     "custom_group_rules": [],
     "expanded_rows": [],

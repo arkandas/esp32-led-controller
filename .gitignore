@@ -34,6 +34,10 @@ fp-info-cache
 # KiCad auto backup files
 *-backups/
 _autosave-*
+.history/
+
+# User configuration (credentials & per-device settings — never commit)
+config.h
 
 # Arduino specific files
 *.hex
