@@ -1,3 +1,5 @@
+
+
 # ESP32 LED Controller 💡
 
 A custom ESP32-based controller for WS2812B/SK6812/WS2814 LED strips with web interface and Alexa integration.
@@ -156,7 +158,7 @@ To get USB UART working on the Serial Monitor:
 After successful upload:
 
 1. **WiFi Connection:** Status LEDs flash yellow (5x) when connected
-2. **Web Interface:** Visit `http://[ESP32_IP]:[WEB_SERVER_PORT]`
+2. **Web Interface:** Visit `http://[ESP32_IP]:8080` (or your configured port)
 
 ![Web Interface V2](v2/assets/web-interface-v2.png)
 
